@@ -78,9 +78,10 @@ def send_email_with_content(subject: str, content: str, to_addrs: list) -> dict:
 def send_email_node(state: SendEmailInput, config: RunnableConfig, runtime: Runtime[Context]) -> SendEmailOutput:
     """
     title: 发送邮件
-    desc: 将新文章通过邮件发送给指定收件人
+    desc: 将新文章逐篇通过邮件发送给指定收件人（每篇文章单独发送）
     integrations: 邮件
     """
+    import time
     ctx = runtime.context
     
     # 如果没有新文章，返回成功但不发送
@@ -90,41 +91,77 @@ def send_email_node(state: SendEmailInput, config: RunnableConfig, runtime: Runt
             email_sent=False
         )
     
-    # 构建邮件内容
-    html_content = "<html><body>"
-    html_content += "<h2>RSS订阅更新通知</h2>"
-    html_content += f"<p>发现 {len(state.new_articles)} 篇新文章：</p><hr>"
+    # 统计发送结果
+    total_count = len(state.new_articles)
+    success_count = 0
+    failed_count = 0
+    send_details = []
     
+    # 逐篇发送邮件
     for idx, article in enumerate(state.new_articles):
-        html_content += f"<h3>{idx + 1}. {article['title']}</h3>"
-        html_content += f"<p><strong>链接：</strong><a href=\"{article['link']}\">{article['link']}</a></p>"
-        if article.get('published'):
-            html_content += f"<p><strong>发布时间：</strong>{article['published']}</p>"
-        if article.get('description'):
-            html_content += f"<p><strong>摘要：</strong>{article['description']}</p>"
+        # 构建单篇文章的邮件内容
+        html_content = "<html><body>"
+        html_content += "<h2>📰 新文章通知</h2>"
+        html_content += f"<h1>{article['title']}</h1>"
         html_content += "<hr>"
+        html_content += f"<p><strong>🔗 文章链接：</strong><a href=\"{article['link']}\">{article['link']}</a></p>"
+        if article.get('published'):
+            html_content += f"<p><strong>📅 发布时间：</strong>{article['published']}</p>"
+        if article.get('description'):
+            html_content += f"<p><strong>📝 内容摘要：</strong></p>"
+            html_content += f"<p>{article['description']}</p>"
+        html_content += "<hr>"
+        html_content += f"<p><small>RSS订阅源：{state.recipient_email}</small></p>"
+        html_content += "</body></html>"
+        
+        # 构建邮件主题（包含文章标题）
+        subject = f"📰 新文章：{article['title']}"
+        
+        # 发送邮件
+        send_result = send_email_with_content(
+            subject=subject,
+            content=html_content,
+            to_addrs=[state.recipient_email]
+        )
+        
+        # 记录发送结果
+        if send_result.get("status") == "success":
+            success_count += 1
+            send_details.append({
+                "title": article['title'],
+                "status": "success",
+                "message": "发送成功"
+            })
+        else:
+            failed_count += 1
+            send_details.append({
+                "title": article['title'],
+                "status": "failed",
+                "message": send_result.get('message', '发送失败')
+            })
+        
+        # 延迟2秒，避免被邮件服务器限制（短时间内发送大量邮件可能被判定为垃圾邮件）
+        if idx < total_count - 1:  # 最后一次不需要延迟
+            time.sleep(2)
     
-    html_content += "</body></html>"
-    
-    # 发送邮件
-    send_result = send_email_with_content(
-        subject=f"RSS订阅更新 - 发现{len(state.new_articles)}篇新文章",
-        content=html_content,
-        to_addrs=[state.recipient_email]
-    )
-    
-    email_sent = send_result.get("status") == "success"
+    # 构建总体发送结果
+    result_summary = {
+        "total": total_count,
+        "success": success_count,
+        "failed": failed_count,
+        "details": send_details
+    }
     
     # 设置email_status
-    if send_result.get("status") == "skipped":
-        email_status = "跳过发送"
-    elif email_sent:
-        email_status = "发送成功"
+    if failed_count == 0:
+        email_status = f"全部成功：{success_count}/{total_count} 篇文章"
+    elif success_count == 0:
+        email_status = f"全部失败：{failed_count}/{total_count} 篇文章"
     else:
-        email_status = f"发送失败: {send_result.get('message', '未知错误')}"
+        email_status = f"部分成功：成功 {success_count} 篇，失败 {failed_count} 篇"
     
     return SendEmailOutput(
-        send_result=send_result,
-        email_sent=email_sent,
+        send_result=result_summary,
+        email_sent=success_count > 0,
         email_status=email_status
     )
