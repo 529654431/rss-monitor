@@ -61,9 +61,6 @@ jobs:
             \"rss_url\": \"${{ env.RSS_URL }}\",
             \"recipient_email\": \"${{ env.RECIPIENT_EMAIL }}\"
           }"
-        env:
-          # 如果需要的环境变量，可以在这里添加
-          # COZE_WORKSPACE_PATH: ${{ github.workspace }}
 
       # 步骤6：上传日志（如果执行失败）
       - name: 上传工作流日志
